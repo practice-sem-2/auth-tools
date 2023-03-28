@@ -91,19 +91,15 @@ func (a *Service) ParseToken(token string) (*UserClaims, error) {
 		return &a.publicKey, nil
 	})
 
-	if errors.Is(err, jwt.ErrTokenExpired) {
-		return nil, ErrTokenExpired
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	if claims, ok := tokenData.Claims.(*UserClaims); ok && tokenData.Valid {
+	claims, ok := tokenData.Claims.(*UserClaims)
+	if ok && tokenData != nil && tokenData.Valid {
 		return claims, nil
 	}
 
-	return nil, ErrInvalidToken
+	if errors.Is(err, jwt.ErrTokenExpired) {
+		return claims, ErrTokenExpired
+	}
+	return claims, err
 }
 
 func (a *Service) SignToken(claims *UserClaims) (string, error) {
