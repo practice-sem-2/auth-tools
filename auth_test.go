@@ -13,7 +13,7 @@ import (
 
 type TestKeyPair struct {
 	PrivateKey    *rsa.PrivateKey
-	PublicKey     rsa.PublicKey
+	PublicKey     *rsa.PublicKey
 	PrivateKeyPem []byte
 	PublicKeyPem  []byte
 }
@@ -29,29 +29,47 @@ func NewTestKeyPair(t *testing.T) *TestKeyPair {
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
 	})
+
+	if privatePem == nil {
+		assert.FailNow(t, "can't encode private key")
+	}
+
+	x509Bytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
 	publicPem := pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PUBLIC KEY",
-		Bytes: x509.MarshalPKCS1PublicKey(&privateKey.PublicKey),
+		Bytes: x509Bytes,
 	})
+
+	if publicPem == nil {
+		assert.FailNow(t, "can't encode public key")
+	}
 
 	return &TestKeyPair{
 		PrivateKey:    privateKey,
-		PublicKey:     privateKey.PublicKey,
+		PublicKey:     &privateKey.PublicKey,
 		PrivateKeyPem: privatePem,
 		PublicKeyPem:  publicPem,
 	}
 }
 
-func TestService_NewFromPem(t *testing.T) {
+func TestService_NewSignerFromPem(t *testing.T) {
 	keys := NewTestKeyPair(t)
-	service, err := NewFromPem(keys.PrivateKeyPem)
+	service, err := NewSignerFromPem(keys.PrivateKeyPem)
 	assert.NoErrorf(t, err, "should not return any errors")
-	assert.Equal(t, keys.PrivateKey, service.privateKey, "must be equal")
+	assert.Equal(t, keys.PrivateKey, service.PrivateKey, "must be equal")
+}
+
+func TestService_NewVerifierFromPem(t *testing.T) {
+	keys := NewTestKeyPair(t)
+	service, err := NewVerifierFromPem(keys.PublicKeyPem)
+	assert.NoErrorf(t, err, "should not return any errors")
+	assert.Equal(t, keys.PublicKey, service.PublicKey, "must be equal")
 }
 
 func TestService_SignToken(t *testing.T) {
 	keys := NewTestKeyPair(t)
-	service, _ := NewFromPem(keys.PrivateKeyPem)
+	signer, _ := NewSignerFromPem(keys.PrivateKeyPem)
+	verifier, _ := NewVerifierFromPem(keys.PublicKeyPem)
 	issuedAt := time.Now().UTC()
 	expiresAt := issuedAt.Add(3 * time.Hour)
 	claims := &UserClaims{
@@ -65,10 +83,10 @@ func TestService_SignToken(t *testing.T) {
 		LastName:  "John",
 		AvatarID:  "1cbbb567-6e35-4267-abe5-41cf2208fbe8",
 	}
-	tokenString, err := service.SignToken(claims)
+	tokenString, err := signer.SignToken(claims)
 
 	assert.NoError(t, err, "should not return any errors")
-	parsedClaims, err := service.ParseToken(tokenString)
+	parsedClaims, err := verifier.ParseToken(tokenString)
 	assert.NoError(t, err, "should not return any errors")
 
 	assert.Equal(t, claims.Username, parsedClaims.Username)
@@ -80,7 +98,8 @@ func TestService_SignToken(t *testing.T) {
 
 func TestService_ParseToken_ExpiredToken(t *testing.T) {
 	keys := NewTestKeyPair(t)
-	service, _ := NewFromPem(keys.PrivateKeyPem)
+	signer, _ := NewSignerFromPem(keys.PrivateKeyPem)
+	verifier, _ := NewVerifierFromPem(keys.PublicKeyPem)
 	issuedAt := time.Now().Add(-3 * time.Hour).UTC()
 	expiresAt := issuedAt.Add(30 * time.Minute).UTC()
 
@@ -95,10 +114,10 @@ func TestService_ParseToken_ExpiredToken(t *testing.T) {
 		LastName:  "John",
 		AvatarID:  "1cbbb567-6e35-4267-abe5-41cf2208fbe8",
 	}
-	tokenString, err := service.SignToken(claims)
+	tokenString, err := signer.SignToken(claims)
 
 	assert.NoError(t, err, "should not return any errors")
-	_, err = service.ParseToken(tokenString)
+	_, err = verifier.ParseToken(tokenString)
 
 	assert.ErrorIs(t, err, ErrTokenExpired, "should return token expiration error")
 

@@ -28,41 +28,31 @@ type UserClaims struct {
 	AvatarID  string `json:"avatar_id"`
 }
 
-type Service struct {
-	privateKey *rsa.PrivateKey
-	publicKey  rsa.PublicKey
+type VerifierService struct {
+	PublicKey *rsa.PublicKey
 }
 
-func NewFromPem(privateKeyRaw []byte) (*Service, error) {
-	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM(privateKeyRaw)
-
+func NewVerifierFromPem(publicKeyRaw []byte) (*VerifierService, error) {
+	publicKey, err := jwt.ParseRSAPublicKeyFromPEM(publicKeyRaw)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Service{
-		privateKey: privateKey,
-		publicKey:  privateKey.PublicKey,
+	return &VerifierService{
+		PublicKey: publicKey,
 	}, nil
 }
 
-func NewFromFile(privateKeyPath string) (*Service, error) {
-	privateKeyRaw, err := os.ReadFile(privateKeyPath)
+func NewVerifierFromFile(publicKeyPath string) (*VerifierService, error) {
+	publicKeyRaw, err := os.ReadFile(publicKeyPath)
 	if err != nil {
 		return nil, err
 	}
-	return NewFromPem(privateKeyRaw)
+
+	return NewVerifierFromPem(publicKeyRaw)
 }
 
-func MustNewFromFile(privateKeyPath string) *Service {
-	interceptor, err := NewFromFile(privateKeyPath)
-	if err != nil {
-		panic(err)
-	}
-	return interceptor
-}
-
-func (a *Service) GetUser(ctx context.Context) (*UserClaims, error) {
+func (s *VerifierService) GetUser(ctx context.Context) (*UserClaims, error) {
 	meta, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return nil, ErrBadContext
@@ -73,7 +63,7 @@ func (a *Service) GetUser(ctx context.Context) (*UserClaims, error) {
 		return nil, ErrNoAuth
 	}
 
-	user, err := a.ParseToken(auth[0])
+	user, err := s.ParseToken(auth[0])
 
 	if err != nil {
 		return nil, ErrInvalidToken
@@ -82,13 +72,13 @@ func (a *Service) GetUser(ctx context.Context) (*UserClaims, error) {
 	return user, nil
 }
 
-func (a *Service) ParseToken(token string) (*UserClaims, error) {
+func (s *VerifierService) ParseToken(token string) (*UserClaims, error) {
 
 	tokenData, err := jwt.ParseWithClaims(token, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, ErrInvalidToken
 		}
-		return &a.publicKey, nil
+		return s.PublicKey, nil
 	})
 
 	claims, ok := tokenData.Claims.(*UserClaims)
@@ -102,9 +92,41 @@ func (a *Service) ParseToken(token string) (*UserClaims, error) {
 	return claims, err
 }
 
-func (a *Service) SignToken(claims *UserClaims) (string, error) {
+type SignerService struct {
+	PrivateKey *rsa.PrivateKey
+}
+
+func NewSignerFromPem(privateKeyRaw []byte) (*SignerService, error) {
+	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM(privateKeyRaw)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &SignerService{
+		PrivateKey: privateKey,
+	}, nil
+}
+
+func NewSignerFromFile(privateKeyPath string) (*SignerService, error) {
+	privateKeyRaw, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	return NewSignerFromPem(privateKeyRaw)
+}
+
+func MustNewSignerFromFile(privateKeyPath string) *SignerService {
+	interceptor, err := NewSignerFromFile(privateKeyPath)
+	if err != nil {
+		panic(err)
+	}
+	return interceptor
+}
+
+func (s *SignerService) SignToken(claims *UserClaims) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	ss, err := token.SignedString(a.privateKey)
+	ss, err := token.SignedString(s.PrivateKey)
 	if err != nil {
 		return "", err
 	}
